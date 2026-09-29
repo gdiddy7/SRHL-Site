@@ -55,12 +55,12 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
   <div class="bar"><span id="info"></span><span><span id="updated"></span> <button id="refresh">Refresh</button></span></div>
   <div id="view"></div>
 </main>
- 
+
 <script>
 /* ===== SETUP ===== */
 const SHEET_ID = "1zxHmipXYKuPcu25WXkwjRrK0b7dHSs0OW7iLwRPYyus";
 const REFRESH_MINUTES = 3;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby5VJ3AT6BVhasEKVNFfJHlxktkmDNDYszab0NNZ6cjiE_K_xe31h9BdpKUJR9C0FNxsg/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxWXzYIEWAiV8IjNh6odVYXhVyTCq1rBQu3uXdG7urzeb736xqjkJ0LTSA4TBF-bSHWxw/exec";
 /* Tab names below must match your sheet's tab names exactly. */
 const TABS = [
   {id:"last",   label:"Last game",  sheet:"Last game"},
@@ -74,14 +74,14 @@ for(let y=2026;y>=2022;y--) for(let q=4;q>=1;q--){
   QUARTERS.push(y+" Q"+q);
 }
 /* ================= */
- 
+
 const COLS_FULL=[["name","Player"],["gp","GP"],["goals","G"],["assists","A"],["points","PTS"],["ppg","P/G"],["gpg","G/G"],["apg","A/G"]];
 const COLS_GAME=[["name","Player"],["goals","G"],["assists","A"],["points","PTS"]];
 const KEYMAP={name:"name",gamesplayed:"gp",goals:"goals",assists:"assists",points:"points",pointspergame:"ppg",goalspergame:"gpg",assistspergame:"apg"};
- 
+
 const view=document.getElementById("view"),nav=document.getElementById("nav");
 let current="last", quarter=QUARTERS[0], sort={key:"points",dir:-1}, cache={};
- 
+
 function parseCsv(text){
   const rows=[];let r=[],c="",q=false;
   for(let i=0;i<text.length;i++){
@@ -119,10 +119,10 @@ async function fetchSheet(name,mode){
   const txt=await main.text(),rows=parseCsv(txt);
   return {meta:m,players:toTable(rows,keys),dbg:`v3 | ${rows.length} rows received | first: ${txt.slice(0,90).replace(/\n/g," / ")}`};
 }
- 
+
 function sheetName(){return current==="quarter"?quarter:TABS.find(t=>t.id===current).sheet}
 const fmt=(v,k)=>v===null||v===undefined?"–":(["ppg","gpg","apg"].includes(k)?v.toFixed(2):v);
- 
+
 function draw(){
   const d=cache[sheetName()]; if(!d) return;
   const cols=current==="last"?COLS_GAME:COLS_FULL;
@@ -144,7 +144,7 @@ function draw(){
   });
 }
 const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
- 
+
 async function load(force){
   if(current==="add") return;
   const name=sheetName();
@@ -200,23 +200,50 @@ async function renderAdd(){
     if(!confirm(`Add ${roster.length} players' stats for ${date} to the Current season and All time totals?`)) return;
     st.textContent="Saving…";
     const r=await send({date,players:roster});
-    if(r==="ok"){st.textContent="Saved. Added to Last game, Current season and All time.";roster=[];drawRows();for(const k of ["Last game","Current season","All time"]) delete cache[k]}
+    if(r.startsWith("ok")){st.textContent="Saved. Added to Last game, Season by game, Current season and All time."+r.slice(2);roster=[];drawRows();for(const k of ["Last game","Current season","All time"]) delete cache[k]}
     else st.textContent=r;
   };
   document.getElementById("aundo").onclick=async()=>{
-    if(!confirm("Undo the most recently added game? This subtracts it from Current season and All time.")) return;
+    if(!confirm("Undo the most recently added game? This subtracts it from Current season and All time and removes it from Season by game.")) return;
     st.textContent="Undoing…";
     const r=await send({action:"undo"});
     st.textContent=r.startsWith("undone")?"Undone. The game on "+r.slice(7)+" was removed from the totals.":r;
     delete cache["Current season"];delete cache["All time"];
   };
+  async function logInfo(){
+    try{
+      const res=await fetch(`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=Game%20log&_=${Date.now()}`,{cache:"no-store"});
+      if(!res.ok) return null;
+      const ap=parseCsv(await res.text()).filter(r=>(r[6]||"").trim()==="applied");
+      return {applied:ap.length,dates:new Set(ap.map(r=>(r[2]||"").trim()))};
+    }catch(e){return null}
+  }
   async function send(extra){
+    const undo=extra.action==="undo";
+    const before=await logInfo()||{applied:0,dates:new Set(),unknown:true};
     try{
       const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({passcode:document.getElementById("ap").value.trim(),...extra})});
       const t=(await res.text()).trim();
-      if(/^<(!doctype|html)/i.test(t)) return "Google sent back an error page instead of an answer. Nothing may have been saved, so check the Game log tab in your sheet before trying again.";
+      if(/^<(!doctype|html)/i.test(t)) throw new Error("html");
       return t||"Something went wrong.";
-    }catch(err){return "Couldn't confirm the result. Check the Current season tab in your sheet before trying again."}
+    }catch(err){
+      // The browser couldn't read Google's reply, so check the Game log to see what happened.
+      let read=false;
+      for(let i=0;i<4;i++){
+        await new Promise(r=>setTimeout(r,2500));
+        const after=await logInfo();
+        if(!after) continue;
+        read=true;
+        if(undo&&after.applied<before.applied){
+          const gone=[...before.dates].find(d=>!after.dates.has(d))||"";
+          return "undone "+gone;
+        }
+        if(!undo&&after.dates.has(extra.date)&&!before.dates.has(extra.date)) return "ok";
+      }
+      return read
+        ?"Google didn't send back a readable answer, and the Game log doesn't show a change, so nothing looks saved. Check the passcode and the sheet, then try again."
+        :"Google didn't send back a readable answer, and I couldn't read the Game log to check. Look at the sheet directly (Last game, Game log, totals) before trying again.";
+    }
   }
 }
 document.getElementById("refresh").onclick=()=>load(true);
