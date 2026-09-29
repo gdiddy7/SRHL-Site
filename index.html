@@ -35,6 +35,14 @@ tr:last-child td{border:0}
 td.r{color:var(--steel);width:34px;padding-right:0}
 td.hi{font-weight:700}
 .msg{padding:18px;color:var(--steel)}
+form{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:18px;display:grid;gap:14px;margin-bottom:40px}
+label{display:grid;gap:4px;font-size:14px;color:var(--steel)}
+input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radius:4px;background:var(--ice);color:var(--navy)}
+.pick{display:flex;gap:8px}.pick select{flex:1;min-width:0}
+.pick button,.pr button{font:600 16px "Barlow Condensed",sans-serif;padding:8px 14px;border:1px solid var(--line);background:var(--card);color:var(--navy);border-radius:4px;cursor:pointer}
+.pr{display:grid;grid-template-columns:1fr 64px 64px 36px;gap:8px;align-items:end;padding:8px 0;border-bottom:1px solid var(--line)}
+.pr span{align-self:center;font-weight:500}.pr input{width:100%}
+.go{background:var(--red);color:#fff;border:0;padding:12px;border-radius:4px;font:700 20px "Barlow Condensed",sans-serif;cursor:pointer}
 </style>
 </head>
 <body>
@@ -49,13 +57,15 @@ td.hi{font-weight:700}
 
 <script>
 /* ===== SETUP ===== */
-const SHEET_ID = "1_lz0PsbBTwZwcaWgzQeTMRQ1fh1DuN0wUhqhFtib-9g";
+const SHEET_ID = "1zxHmipXYKuPcu25WXkwjRrK0b7dHSs0OW7iLwRPYyus";
 const REFRESH_MINUTES = 3;
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxWXzYIEWAiV8IjNh6odVYXhVyTCq1rBQu3uXdG7urzeb736xqjkJ0LTSA4TBF-bSHWxw/exec";
 /* Tab names below must match your sheet's tab names exactly. */
 const TABS = [
   {id:"last",   label:"Last game",  sheet:"Last game"},
   {id:"season", label:"Season",     sheet:"Current season"},
-  {id:"all",    label:"All time",   sheet:"All time"}
+  {id:"all",    label:"All time",   sheet:"All time"},
+  {id:"add",    label:"Add game",   sheet:null}
 ];
 const QUARTERS = [];  // newest first: 2026 Q3 back to 2022 Q3
 for(let y=2026;y>=2022;y--) for(let q=4;q>=1;q--){
@@ -105,7 +115,8 @@ async function fetchSheet(name,mode){
   const keys=mode==="last"?["name","goals","assists","points"]:["name","gp","goals","assists","points","ppg","gpg","apg"];
   let m="";
   if(meta&&meta.ok){const c=parseCsv(await meta.text()).flat().map(x=>x.trim()).filter(Boolean);m=c[c.length-1]||""}
-  return {meta:m,players:toTable(parseCsv(await main.text()),keys)};
+  const txt=await main.text(),rows=parseCsv(txt);
+  return {meta:m,players:toTable(rows,keys),dbg:`v3 | ${rows.length} rows received | first: ${txt.slice(0,90).replace(/\n/g," / ")}`};
 }
 
 function sheetName(){return current==="quarter"?quarter:TABS.find(t=>t.id===current).sheet}
@@ -123,7 +134,7 @@ function draw(){
   });
   document.getElementById("info").textContent=
     current==="last"?(d.meta?"Game on "+d.meta:""):current==="season"?(d.meta?"Season "+d.meta:""):current==="quarter"?quarter:"Career totals";
-  if(!list.length){view.innerHTML='<div class="wrap"><p class="msg">No stats recorded here yet.</p></div>';return}
+  if(!list.length){view.innerHTML=`<div class="wrap"><p class="msg">No stats recorded here yet.</p><p class="msg" style="font-size:12px;padding-top:0">${esc(d.dbg||"")}</p></div>`;return}
   const head=cols.map(([k,l])=>`<th data-k="${k}" ${sort.key===k?`aria-sort="${sort.dir<0?"descending":"ascending"}"`:""}>${l}</th>`).join("");
   const body=list.map((p,i)=>`<tr>${cols.map(([k],j)=>j===0?`<td><span class="r">${i+1}</span>&nbsp; ${esc(p.name)}</td>`:`<td class="${k==="points"?"hi":""}">${fmt(p[k],k)}</td>`).join("")}</tr>`).join("");
   view.innerHTML=`<div class="wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
@@ -134,6 +145,7 @@ function draw(){
 const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
 
 async function load(force){
+  if(current==="add") return;
   const name=sheetName();
   if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">Loading…</p></div>';
   try{
@@ -149,9 +161,53 @@ async function load(force){
 function buildNav(){
   nav.innerHTML=TABS.map(t=>`<button data-t="${t.id}" aria-selected="${current===t.id}">${t.label}</button>`).join("")+
     `<select id="q" aria-label="Quarter" aria-selected="${current==="quarter"}">${QUARTERS.map(q=>`<option ${q===quarter&&current==="quarter"?"selected":""}>${q}</option>`).join("")}</select>`;
-  nav.querySelectorAll("button").forEach(b=>b.onclick=()=>{current=b.dataset.t;buildNav();load()});
+  nav.querySelectorAll("button").forEach(b=>b.onclick=()=>{current=b.dataset.t;buildNav();current==="add"?renderAdd():load()});
   const s=document.getElementById("q");
   s.onchange=()=>{current="quarter";quarter=s.value;buildNav();load()};
+}
+let roster=[];
+async function renderAdd(){
+  document.getElementById("info").textContent="Enter a game night";
+  document.getElementById("updated").textContent="";
+  view.innerHTML='<div class="wrap"><p class="msg">Loading…</p></div>';
+  try{ if(!cache["All time"]){const t=await fetchSheet("All time","all");t.at=Date.now();cache["All time"]=t} }
+  catch(e){view.innerHTML='<div class="wrap"><p class="msg">Couldn\'t load the player list.</p></div>';return}
+  const names=cache["All time"].players.map(p=>p.name).sort((a,b)=>a.localeCompare(b));
+  view.innerHTML=`<form id="af">
+    <label>Game date<input type="date" id="ad" required value="${new Date().toLocaleDateString("en-CA")}"></label>
+    <label>Captain passcode<input type="password" id="ap" autocomplete="off"></label>
+    <div class="pick"><select id="an" aria-label="Player"><option value="">Choose a player</option>${names.map(n=>`<option>${esc(n)}</option>`).join("")}</select><button type="button" id="aadd">Add player</button></div>
+    <div id="ar"></div>
+    <button class="go">Save to Last game tab</button>
+    <div class="msg" id="as" role="status" style="padding:0"></div></form>`;
+  const rows=document.getElementById("ar"),st=document.getElementById("as");
+  const drawRows=()=>{rows.innerHTML=roster.map((p,i)=>`<div class="pr"><span>${esc(p.name)}</span><label>G<input type="number" inputmode="numeric" min="0" max="99" data-i="${i}" data-f="goals" value="${p.goals}"></label><label>A<input type="number" inputmode="numeric" min="0" max="99" data-i="${i}" data-f="assists" value="${p.assists}"></label><button type="button" data-rm="${i}" aria-label="Remove ${esc(p.name)}">✕</button></div>`).join("")};
+  drawRows();
+  document.getElementById("aadd").onclick=()=>{
+    const sel=document.getElementById("an"),n=sel.value;
+    if(!n) return;
+    if(roster.some(p=>p.name===n)){st.textContent=n+" is already added.";return}
+    roster.push({name:n,goals:0,assists:0});sel.value="";st.textContent="";drawRows();
+  };
+  rows.oninput=e=>{const t=e.target;if(t.dataset.f) roster[t.dataset.i][t.dataset.f]=Math.max(0,Math.min(99,parseInt(t.value,10)||0))};
+  rows.onclick=e=>{const i=e.target.dataset.rm;if(i!==undefined){roster.splice(i,1);drawRows()}};
+  document.getElementById("af").onsubmit=async e=>{
+    e.preventDefault();
+    if(SCRIPT_URL.includes("PASTE")){st.textContent="The form isn't connected to your sheet yet (SCRIPT_URL).";return}
+    if(!roster.length){st.textContent="Add at least one player.";return}
+    st.textContent="Saving…";
+    const body=JSON.stringify({passcode:document.getElementById("ap").value,date:document.getElementById("ad").value,players:roster});
+    try{
+      const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body});
+      const msg=(await res.text()).trim();
+      if(msg==="ok"){st.textContent="Saved to the Last game tab. Copy it into your totals as usual.";roster=[];drawRows();delete cache["Last game"]}
+      else st.textContent=msg||"Something went wrong.";
+    }catch(err){
+      try{await fetch(SCRIPT_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body});
+        st.textContent="Sent, but couldn't confirm. Check the Last game tab in your sheet."}
+      catch(e2){st.textContent="Couldn't send. Check your connection and try again."}
+    }
+  };
 }
 document.getElementById("refresh").onclick=()=>load(true);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
