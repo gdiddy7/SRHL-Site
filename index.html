@@ -60,7 +60,7 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
 /* ===== SETUP ===== */
 const SHEET_ID = "1_lz0PsbBTwZwcaWgzQeTMRQ1fh1DuN0wUhqhFtib-9g";
 const REFRESH_MINUTES = 3;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxzBXFQaRAcbundZ6rkgaC0Y0dHqjd6E_pUx4-jMt5-_InGT-59GwpOw-158VCZ1Fpgow/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby5VJ3AT6BVhasEKVNFfJHlxktkmDNDYszab0NNZ6cjiE_K_xe31h9BdpKUJR9C0FNxsg/exec";
 /* Tab names below must match your sheet's tab names exactly. */
 const TABS = [
   {id:"last",   label:"Last game",  sheet:"Last game"},
@@ -228,17 +228,21 @@ async function renderAdd(){
       return t||"Something went wrong.";
     }catch(err){
       // The browser couldn't read Google's reply, so check the Game log to see what happened.
+      let read=false;
       for(let i=0;i<4;i++){
         await new Promise(r=>setTimeout(r,2500));
         const after=await logInfo();
         if(!after) continue;
+        read=true;
         if(undo&&after.applied<before.applied){
           const gone=[...before.dates].find(d=>!after.dates.has(d))||"";
           return "undone "+gone;
         }
         if(!undo&&after.dates.has(extra.date)&&!before.dates.has(extra.date)) return "ok";
       }
-      return "Google didn't send back a readable answer, and the Game log doesn't show a change, so nothing looks saved. Check the passcode and the sheet, then try again.";
+      return read
+        ?"Google didn't send back a readable answer, and the Game log doesn't show a change, so nothing looks saved. Check the passcode and the sheet, then try again."
+        :"Google didn't send back a readable answer, and I couldn't read the Game log to check. Look at the sheet directly (Last game, Game log, totals) before trying again.";
     }
   }
 }
