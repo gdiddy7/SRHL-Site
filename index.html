@@ -84,33 +84,28 @@ function parseCsv(text){
   if(c||r.length){r.push(c);rows.push(r)}
   return rows;
 }
-function toTable(rows){
-  let meta="",h=rows.findIndex(r=>r.some(v=>v.trim().toLowerCase()==="name"));
-  if(h<0) throw new Error("no header");
-  for(const r of rows.slice(0,h)){
-    const k=(r[0]||"").trim().toLowerCase();
-    if(k.startsWith("game date")||k.startsWith("season dates")) meta=(r[1]||"").trim();
-  }
-  const off=rows[h].findIndex(v=>v.trim().toLowerCase()==="name");
-  const keys=rows[h].slice(off).map(v=>KEYMAP[v.trim().toLowerCase().replace(/[^a-z]/g,"")]||null);
+function toTable(rows,keys){
   const players=[];
-  for(const r of rows.slice(h+1)){
-    const o={};
-    keys.forEach((k,i)=>{if(k) o[k]=(r[off+i]||"").trim()});
-    if(!o.name) continue;
-    for(const k in o) if(k!=="name"){const n=parseFloat(o[k]);o[k]=isNaN(n)?null:n}
-    if(o.points===null&&o.goals===null&&o.assists===null) continue;
-    if(o.gp===0||(o.gp===undefined&&(o.points||0)===0&&!o.goals&&!o.assists)) continue;
-    if(o.gp===null&&!o.points) continue;
+  for(const r of rows){
+    const name=(r[0]||"").trim(),low=name.toLowerCase();
+    if(!name||low==="name"||low.endsWith(":")||low.startsWith("season dates")||low.startsWith("game date")) continue;
+    const o={name};
+    keys.forEach((k,i)=>{if(i>0){const n=parseFloat(r[i]);o[k]=isNaN(n)?null:n}});
+    if(!o.gp&&!o.points&&!o.goals&&!o.assists) continue;
     players.push(o);
   }
-  return {meta,players};
+  return players;
 }
-async function fetchSheet(name){
-  const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}&_=${Date.now()}`;
-  const res=await fetch(url,{cache:"no-store"});
-  if(!res.ok) throw new Error("http "+res.status);
-  return toTable(parseCsv(await res.text()));
+async function fetchSheet(name,mode){
+  const base=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}`;
+  const bust="&_="+Date.now(),opt={cache:"no-store"};
+  const wantMeta=mode==="last"||mode==="season";
+  const [main,meta]=await Promise.all([fetch(base+bust,opt),wantMeta?fetch(base+"&range=B1:B1"+bust,opt):null]);
+  if(!main.ok) throw new Error("http "+main.status);
+  const keys=mode==="last"?["name","goals","assists","points"]:["name","gp","goals","assists","points","ppg","gpg","apg"];
+  let m="";
+  if(meta&&meta.ok){const c=parseCsv(await meta.text()).flat().map(x=>x.trim()).filter(Boolean);m=c[c.length-1]||""}
+  return {meta:m,players:toTable(parseCsv(await main.text()),keys)};
 }
 
 function sheetName(){return current==="quarter"?quarter:TABS.find(t=>t.id===current).sheet}
@@ -143,7 +138,7 @@ async function load(force){
   if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">Loading…</p></div>';
   try{
     if(force||!cache[name]||Date.now()-cache[name].at>REFRESH_MINUTES*60000){
-      const t=await fetchSheet(name); t.at=Date.now(); cache[name]=t;
+      const t=await fetchSheet(name,current); t.at=Date.now(); cache[name]=t;
     }
     document.getElementById("updated").textContent="Updated "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
     draw();
