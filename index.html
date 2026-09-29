@@ -55,7 +55,7 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
   <div class="bar"><span id="info"></span><span><span id="updated"></span> <button id="refresh">Refresh</button></span></div>
   <div id="view"></div>
 </main>
-
+ 
 <script>
 /* ===== SETUP ===== */
 const SHEET_ID = "1zxHmipXYKuPcu25WXkwjRrK0b7dHSs0OW7iLwRPYyus";
@@ -74,14 +74,14 @@ for(let y=2026;y>=2022;y--) for(let q=4;q>=1;q--){
   QUARTERS.push(y+" Q"+q);
 }
 /* ================= */
-
+ 
 const COLS_FULL=[["name","Player"],["gp","GP"],["goals","G"],["assists","A"],["points","PTS"],["ppg","P/G"],["gpg","G/G"],["apg","A/G"]];
 const COLS_GAME=[["name","Player"],["goals","G"],["assists","A"],["points","PTS"]];
 const KEYMAP={name:"name",gamesplayed:"gp",goals:"goals",assists:"assists",points:"points",pointspergame:"ppg",goalspergame:"gpg",assistspergame:"apg"};
-
+ 
 const view=document.getElementById("view"),nav=document.getElementById("nav");
 let current="last", quarter=QUARTERS[0], sort={key:"points",dir:-1}, cache={};
-
+ 
 function parseCsv(text){
   const rows=[];let r=[],c="",q=false;
   for(let i=0;i<text.length;i++){
@@ -111,7 +111,7 @@ async function fetchSheet(name,mode){
   const base=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}`;
   const bust="&_="+Date.now(),opt={cache:"no-store"};
   const wantMeta=mode==="last"||mode==="season";
-  const [main,meta]=await Promise.all([fetch(base+bust,opt),wantMeta?fetch(base+"&range=B1:B1"+bust,opt):null]);
+  const [main,meta]=await Promise.all([fetch(base+(mode==="last"?"&range=A3:D100":"")+bust,opt),wantMeta?fetch(base+"&range=B1:B1"+bust,opt):null]);
   if(!main.ok) throw new Error("http "+main.status);
   const keys=mode==="last"?["name","goals","assists","points"]:["name","gp","goals","assists","points","ppg","gpg","apg"];
   let m="";
@@ -119,10 +119,10 @@ async function fetchSheet(name,mode){
   const txt=await main.text(),rows=parseCsv(txt);
   return {meta:m,players:toTable(rows,keys),dbg:`v3 | ${rows.length} rows received | first: ${txt.slice(0,90).replace(/\n/g," / ")}`};
 }
-
+ 
 function sheetName(){return current==="quarter"?quarter:TABS.find(t=>t.id===current).sheet}
 const fmt=(v,k)=>v===null||v===undefined?"–":(["ppg","gpg","apg"].includes(k)?v.toFixed(2):v);
-
+ 
 function draw(){
   const d=cache[sheetName()]; if(!d) return;
   const cols=current==="last"?COLS_GAME:COLS_FULL;
@@ -144,7 +144,7 @@ function draw(){
   });
 }
 const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
-
+ 
 async function load(force){
   if(current==="add") return;
   const name=sheetName();
@@ -176,7 +176,7 @@ async function renderAdd(){
   const names=cache["All time"].players.map(p=>p.name).sort((a,b)=>a.localeCompare(b));
   view.innerHTML=`<form id="af">
     <label>Game date<input type="date" id="ad" required value="${new Date().toLocaleDateString("en-CA")}"></label>
-    <label>Captain passcode<input type="password" id="ap" autocomplete="off"></label>
+    <label>Captain passcode<input type="password" id="ap" name="captain-code" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false"></label>
     <div class="pick"><select id="an" aria-label="Player"><option value="">Choose a player</option>${names.map(n=>`<option>${esc(n)}</option>`).join("")}</select><button type="button" id="aadd">Add player</button></div>
     <div id="ar"></div>
     <button class="go">Save to Last game tab</button>
@@ -212,8 +212,10 @@ async function renderAdd(){
   };
   async function send(extra){
     try{
-      const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({passcode:document.getElementById("ap").value,...extra})});
-      return (await res.text()).trim()||"Something went wrong.";
+      const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({passcode:document.getElementById("ap").value.trim(),...extra})});
+      const t=(await res.text()).trim();
+      if(/^<(!doctype|html)/i.test(t)) return "Google sent back an error page instead of an answer. Nothing may have been saved, so check the Game log tab in your sheet before trying again.";
+      return t||"Something went wrong.";
     }catch(err){return "Couldn't confirm the result. Check the Current season tab in your sheet before trying again."}
   }
 }
