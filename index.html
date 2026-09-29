@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SR Hockey Stats</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{--ice:#eef3f6;--card:#fff;--navy:#14213d;--red:#c8102e;--steel:#5d6d80;--line:#d3dde5}
+@media(prefers-color-scheme:dark){:root{--ice:#0e1524;--card:#16203a;--navy:#e8eef5;--steel:#96a5b8;--line:#2a3856}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ice);color:var(--navy);font:16px/1.5 Barlow,system-ui,sans-serif}
+header,main{max-width:900px;margin:auto;padding:0 16px}
+header{padding-top:26px}
+h1{font:700 44px/1 "Barlow Condensed",Impact,sans-serif;margin:0;text-transform:uppercase}
+h1 i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-left:8px}
+nav{display:flex;gap:4px;margin-top:16px;border-bottom:2px solid var(--line);overflow-x:auto;align-items:center}
+nav button,nav select{background:none;border:0;padding:10px 14px;font:600 18px "Barlow Condensed",sans-serif;color:var(--steel);cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap}
+nav [aria-selected=true]{color:var(--navy);border-color:var(--red)}
+nav select{background:var(--ice)}
+:focus-visible{outline:3px solid var(--red);outline-offset:2px}
+.bar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin:16px 0 10px;color:var(--steel);font-size:14px}
+.bar button{font:600 15px "Barlow Condensed",sans-serif;padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--navy);border-radius:4px;cursor:pointer}
+.wrap{overflow-x:auto;background:var(--card);border:1px solid var(--line);border-radius:6px;margin-bottom:40px}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+th,td{padding:10px 12px;text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--card)}
+th{font:600 15px "Barlow Condensed",sans-serif;color:var(--steel);border-bottom:2px solid var(--navy);cursor:pointer;user-select:none}
+th[aria-sort]{color:var(--navy)}
+th[aria-sort=descending]::after{content:" ▼";font-size:10px}
+th[aria-sort=ascending]::after{content:" ▲";font-size:10px}
+td{border-bottom:1px solid var(--line)}
+tr:last-child td{border:0}
+td.r{color:var(--steel);width:34px;padding-right:0}
+td.hi{font-weight:700}
+.msg{padding:18px;color:var(--steel)}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">SR Hockey Stats<i></i></h1>
+  <nav id="nav"></nav>
+</header>
+<main>
+  <div class="bar"><span id="info"></span><span><span id="updated"></span> <button id="refresh">Refresh</button></span></div>
+  <div id="view"></div>
+</main>
+
+<script>
+/* ===== SETUP ===== */
+const SHEET_ID = "1_lz0PsbBTwZwcaWgzQeTMRQ1fh1DuN0wUhqhFtib-9g";
+const REFRESH_MINUTES = 3;
+/* Tab names below must match your sheet's tab names exactly. */
+const TABS = [
+  {id:"last",   label:"Last game",  sheet:"Last game"},
+  {id:"season", label:"Season",     sheet:"Current season"},
+  {id:"all",    label:"All time",   sheet:"All time"}
+];
+const QUARTERS = [];  // newest first: 2026 Q3 back to 2022 Q3
+for(let y=2026;y>=2022;y--) for(let q=4;q>=1;q--){
+  if((y===2026&&q>3)||(y===2022&&q<3)) continue;
+  QUARTERS.push(y+" Q"+q);
+}
+/* ================= */
+
+const COLS_FULL=[["name","Player"],["gp","GP"],["goals","G"],["assists","A"],["points","PTS"],["ppg","P/G"],["gpg","G/G"],["apg","A/G"]];
+const COLS_GAME=[["name","Player"],["goals","G"],["assists","A"],["points","PTS"]];
+const KEYMAP={name:"name",gamesplayed:"gp",goals:"goals",assists:"assists",points:"points",pointspergame:"ppg",goalspergame:"gpg",assistspergame:"apg"};
+
+const view=document.getElementById("view"),nav=document.getElementById("nav");
+let current="last", quarter=QUARTERS[0], sort={key:"points",dir:-1}, cache={};
+
+function parseCsv(text){
+  const rows=[];let r=[],c="",q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i];
+    if(q){ if(ch=='"'){ if(text[i+1]=='"'){c+='"';i++} else q=false } else c+=ch }
+    else if(ch=='"') q=true;
+    else if(ch==","){r.push(c);c=""}
+    else if(ch=="\n"){r.push(c);rows.push(r);r=[];c=""}
+    else if(ch!="\r") c+=ch;
+  }
+  if(c||r.length){r.push(c);rows.push(r)}
+  return rows;
+}
+function toTable(rows){
+  let meta="",h=rows.findIndex(r=>r.some(v=>v.trim().toLowerCase()==="name"));
+  if(h<0) throw new Error("no header");
+  for(const r of rows.slice(0,h)){
+    const k=(r[0]||"").trim().toLowerCase();
+    if(k.startsWith("game date")||k.startsWith("season dates")) meta=(r[1]||"").trim();
+  }
+  const off=rows[h].findIndex(v=>v.trim().toLowerCase()==="name");
+  const keys=rows[h].slice(off).map(v=>KEYMAP[v.trim().toLowerCase().replace(/[^a-z]/g,"")]||null);
+  const players=[];
+  for(const r of rows.slice(h+1)){
+    const o={};
+    keys.forEach((k,i)=>{if(k) o[k]=(r[off+i]||"").trim()});
+    if(!o.name) continue;
+    for(const k in o) if(k!=="name"){const n=parseFloat(o[k]);o[k]=isNaN(n)?null:n}
+    if(o.points===null&&o.goals===null&&o.assists===null) continue;
+    if(o.gp===0||(o.gp===undefined&&(o.points||0)===0&&!o.goals&&!o.assists)) continue;
+    if(o.gp===null&&!o.points) continue;
+    players.push(o);
+  }
+  return {meta,players};
+}
+async function fetchSheet(name){
+  const url=`https://docs.google.com/spreadsheets/d/${SHEET_ID}/gviz/tq?tqx=out:csv&headers=0&sheet=${encodeURIComponent(name)}&_=${Date.now()}`;
+  const res=await fetch(url,{cache:"no-store"});
+  if(!res.ok) throw new Error("http "+res.status);
+  return toTable(parseCsv(await res.text()));
+}
+
+function sheetName(){return current==="quarter"?quarter:TABS.find(t=>t.id===current).sheet}
+const fmt=(v,k)=>v===null||v===undefined?"–":(["ppg","gpg","apg"].includes(k)?v.toFixed(2):v);
+
+function draw(){
+  const d=cache[sheetName()]; if(!d) return;
+  const cols=current==="last"?COLS_GAME:COLS_FULL;
+  if(!cols.some(c=>c[0]===sort.key)) sort={key:"points",dir:-1};
+  const list=[...d.players].sort((a,b)=>{
+    if(sort.key==="name") return sort.dir*a.name.localeCompare(b.name);
+    const x=a[sort.key],y=b[sort.key];
+    if(x===null||x===undefined) return 1; if(y===null||y===undefined) return -1;
+    return sort.dir*(x-y)||(b.points-a.points)||a.name.localeCompare(b.name);
+  });
+  document.getElementById("info").textContent=
+    current==="last"?(d.meta?"Game on "+d.meta:""):current==="season"?(d.meta?"Season "+d.meta:""):current==="quarter"?quarter:"Career totals";
+  if(!list.length){view.innerHTML='<div class="wrap"><p class="msg">No stats recorded here yet.</p></div>';return}
+  const head=cols.map(([k,l])=>`<th data-k="${k}" ${sort.key===k?`aria-sort="${sort.dir<0?"descending":"ascending"}"`:""}>${l}</th>`).join("");
+  const body=list.map((p,i)=>`<tr>${cols.map(([k],j)=>j===0?`<td><span class="r">${i+1}</span>&nbsp; ${esc(p.name)}</td>`:`<td class="${k==="points"?"hi":""}">${fmt(p[k],k)}</td>`).join("")}</tr>`).join("");
+  view.innerHTML=`<div class="wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+  view.querySelectorAll("th").forEach(th=>th.onclick=()=>{
+    const k=th.dataset.k; sort=sort.key===k?{key:k,dir:-sort.dir}:{key:k,dir:k==="name"?1:-1}; draw();
+  });
+}
+const esc=s=>String(s).replace(/[&<>"]/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m]));
+
+async function load(force){
+  const name=sheetName();
+  if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">Loading…</p></div>';
+  try{
+    if(force||!cache[name]||Date.now()-cache[name].at>REFRESH_MINUTES*60000){
+      const t=await fetchSheet(name); t.at=Date.now(); cache[name]=t;
+    }
+    document.getElementById("updated").textContent="Updated "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+    draw();
+  }catch(e){
+    if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">Couldn\'t load this tab. Check that the sheet is shared as "Anyone with the link can view" and the tab name matches.</p></div>';
+  }
+}
+function buildNav(){
+  nav.innerHTML=TABS.map(t=>`<button data-t="${t.id}" aria-selected="${current===t.id}">${t.label}</button>`).join("")+
+    `<select id="q" aria-label="Quarter" aria-selected="${current==="quarter"}">${QUARTERS.map(q=>`<option ${q===quarter&&current==="quarter"?"selected":""}>${q}</option>`).join("")}</select>`;
+  nav.querySelectorAll("button").forEach(b=>b.onclick=()=>{current=b.dataset.t;buildNav();load()});
+  const s=document.getElementById("q");
+  s.onchange=()=>{current="quarter";quarter=s.value;buildNav();load()};
+}
+document.getElementById("refresh").onclick=()=>load(true);
+document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
+setInterval(()=>{if(!document.hidden)load(true)},REFRESH_MINUTES*60000);
+buildNav(); load();
+</script>
+</body>
+</html>
