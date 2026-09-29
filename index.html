@@ -43,6 +43,7 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
 .pr{display:grid;grid-template-columns:1fr 64px 64px 36px;gap:8px;align-items:end;padding:8px 0;border-bottom:1px solid var(--line)}
 .pr span{align-self:center;font-weight:500}.pr input{width:100%}
 .go{background:var(--red);color:#fff;border:0;padding:12px;border-radius:4px;font:700 20px "Barlow Condensed",sans-serif;cursor:pointer}
+#aundo{align-self:start;font:600 15px "Barlow Condensed",sans-serif;padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--steel);border-radius:4px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -59,7 +60,7 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
 /* ===== SETUP ===== */
 const SHEET_ID = "1zxHmipXYKuPcu25WXkwjRrK0b7dHSs0OW7iLwRPYyus";
 const REFRESH_MINUTES = 3;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyIGj2CPgoRIVgjTj81sikVo0wFxpvFElR0bMkXxL4KtrxMOlVVlQgj7cUl8TpPqCOVqw/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxWXzYIEWAiV8IjNh6odVYXhVyTCq1rBQu3uXdG7urzeb736xqjkJ0LTSA4TBF-bSHWxw/exec";
 /* Tab names below must match your sheet's tab names exactly. */
 const TABS = [
   {id:"last",   label:"Last game",  sheet:"Last game"},
@@ -167,7 +168,7 @@ function buildNav(){
 }
 let roster=[];
 async function renderAdd(){
-  document.getElementById("info").textContent="Enter a game night";
+  document.getElementById("info").textContent="Enter a game";
   document.getElementById("updated").textContent="";
   view.innerHTML='<div class="wrap"><p class="msg">Loading…</p></div>';
   try{ if(!cache["All time"]){const t=await fetchSheet("All time","all");t.at=Date.now();cache["All time"]=t} }
@@ -179,7 +180,7 @@ async function renderAdd(){
     <div class="pick"><select id="an" aria-label="Player"><option value="">Choose a player</option>${names.map(n=>`<option>${esc(n)}</option>`).join("")}</select><button type="button" id="aadd">Add player</button></div>
     <div id="ar"></div>
     <button class="go">Save to Last game tab</button>
-    <div class="msg" id="as" role="status" style="padding:0"></div></form>`;
+    <div class="msg" id="as" role="status" style="padding:0"></div><button type="button" id="aundo">Undo last saved game</button></form>`;
   const rows=document.getElementById("ar"),st=document.getElementById("as");
   const drawRows=()=>{rows.innerHTML=roster.map((p,i)=>`<div class="pr"><span>${esc(p.name)}</span><label>G<input type="number" inputmode="numeric" min="0" max="99" data-i="${i}" data-f="goals" value="${p.goals}"></label><label>A<input type="number" inputmode="numeric" min="0" max="99" data-i="${i}" data-f="assists" value="${p.assists}"></label><button type="button" data-rm="${i}" aria-label="Remove ${esc(p.name)}">✕</button></div>`).join("")};
   drawRows();
@@ -195,19 +196,26 @@ async function renderAdd(){
     e.preventDefault();
     if(SCRIPT_URL.includes("PASTE")){st.textContent="The form isn't connected to your sheet yet (SCRIPT_URL).";return}
     if(!roster.length){st.textContent="Add at least one player.";return}
+    const date=document.getElementById("ad").value;
+    if(!confirm(`Add ${roster.length} players' stats for ${date} to the Current season and All time totals?`)) return;
     st.textContent="Saving…";
-    const body=JSON.stringify({passcode:document.getElementById("ap").value,date:document.getElementById("ad").value,players:roster});
-    try{
-      const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body});
-      const msg=(await res.text()).trim();
-      if(msg==="ok"){st.textContent="Saved to the Last game tab. Copy it into your totals as usual.";roster=[];drawRows();delete cache["Last game"]}
-      else st.textContent=msg||"Something went wrong.";
-    }catch(err){
-      try{await fetch(SCRIPT_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body});
-        st.textContent="Sent, but couldn't confirm. Check the Last game tab in your sheet."}
-      catch(e2){st.textContent="Couldn't send. Check your connection and try again."}
-    }
+    const r=await send({date,players:roster});
+    if(r==="ok"){st.textContent="Saved. Added to Last game, Current season and All time.";roster=[];drawRows();for(const k of ["Last game","Current season","All time"]) delete cache[k]}
+    else st.textContent=r;
   };
+  document.getElementById("aundo").onclick=async()=>{
+    if(!confirm("Undo the most recently added game? This subtracts it from Current season and All time.")) return;
+    st.textContent="Undoing…";
+    const r=await send({action:"undo"});
+    st.textContent=r.startsWith("undone")?"Undone. The game on "+r.slice(7)+" was removed from the totals.":r;
+    delete cache["Current season"];delete cache["All time"];
+  };
+  async function send(extra){
+    try{
+      const res=await fetch(SCRIPT_URL,{method:"POST",headers:{"Content-Type":"text/plain"},body:JSON.stringify({passcode:document.getElementById("ap").value,...extra})});
+      return (await res.text()).trim()||"Something went wrong.";
+    }catch(err){return "Couldn't confirm the result. Check the Current season tab in your sheet before trying again."}
+  }
 }
 document.getElementById("refresh").onclick=()=>load(true);
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)load()});
