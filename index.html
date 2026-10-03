@@ -60,7 +60,7 @@ input,select{font:inherit;padding:10px;border:1px solid var(--line);border-radiu
 /* ===== SETUP ===== */
 const SHEET_ID = "1zxHmipXYKuPcu25WXkwjRrK0b7dHSs0OW7iLwRPYyus";
 const REFRESH_MINUTES = 3;
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycby72e8y8o2qjtpI3HCBvX0Z-XfTUPmhxnDjRt-0Q0JbRRKaTV4Skb6jhQ3vPyWImDVWjw/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbypdXuMHgl78ADjYHBmjRCXTo1JLLrljiXSY2PFrg_9uOU3qmCXvTBgWpNrx43Iu_GDIQ/exec";
 /* Tab names below must match your sheet's tab names exactly. */
 const TABS = [
   {id:"last",   label:"Last game",  sheet:"Last game"},
@@ -68,10 +68,13 @@ const TABS = [
   {id:"all",    label:"All time",   sheet:"All time"},
   {id:"add",    label:"Add game",   sheet:null}
 ];
-const QUARTERS = [];  // newest first: 2026 Q3 back to 2022 Q3
-for(let y=2026;y>=2022;y--) for(let q=4;q>=1;q--){
-  if((y===2026&&q>3)||(y===2022&&q<3)) continue;
-  QUARTERS.push(y+" Q"+q);
+const QUARTERS = [];  // finished quarters only, newest first (the current season is its own tab)
+{
+  const now=new Date(), cur=now.getFullYear()*4+Math.floor(now.getMonth()/3);
+  for(let y=now.getFullYear();y>=2022;y--) for(let q=4;q>=1;q--){
+    if(y*4+q-1>=cur||(y===2022&&q<3)) continue;
+    QUARTERS.push(y+" Q"+q);
+  }
 }
 /* ================= */
 
@@ -156,7 +159,7 @@ async function load(force){
     document.getElementById("updated").textContent="Updated "+new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
     draw();
   }catch(e){
-    if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">Couldn\'t load this tab. Check that the sheet is shared as "Anyone with the link can view" and the tab name matches.</p></div>';
+    if(!cache[name]) view.innerHTML='<div class="wrap"><p class="msg">'+(current==="quarter"?"Couldn't load that quarter. Its tab may not exist yet.":"Couldn't load this tab. Check that the sheet is shared as \"Anyone with the link can view\" and the tab name matches.")+'</p></div>';
   }
 }
 function buildNav(){
